@@ -9,16 +9,19 @@
 #include "filesys.h"
 #include "util.h"
 
+int k = 1;
+double cpu_time = 20, comp_result;
+
 typedef std::vector<std::string> Items;
 typedef std::set<std::set<std::string>> Candidates;
 
-int generate_candidates(char *in, char *out, char *k)
+int generate_candidates(char *in, char *out)
 {
     Items items;
     char input_path[1024], output_path[1024];
     char buf[256];
 
-    // Resolve in and out filenames
+    // Resolve input filename
     boinc_resolve_filename(in, input_path, sizeof(input_path));
     FILE *infile = boinc_fopen(input_path, "r");
     if (!infile)
@@ -28,33 +31,8 @@ int generate_candidates(char *in, char *out, char *k)
                 boinc_msg_prefix(buf, sizeof(buf)), input_path);
         return -1;
     }
-    else
-    {
-        char line[256];
-        // Add each line to items
-        while (fgets(line, sizeof(line), infile))
-        {
-            line[strcspn(line, "\n")] = 0;
-            items.push_back(line);
-        }
-    }
-    fclose(infile);
-    // Sort items (required for next_permutation)
-    std::sort(items.begin(), items.end());
 
-    // Use std::next_permutation to generate all combinations (n choose k)
-    Candidates candidates;
-    do
-    {
-        std::set<std::string> candidate;
-        for (int i = 0; i < std::stoi(k); i++)
-        {
-            candidate.insert(items[i]);
-        }
-        candidates.insert(candidate);
-    } while (std::next_permutation(items.begin(), items.end()));
-
-    // Print all candidates to outfile
+    // Resolve output filename
     boinc_resolve_filename(out, output_path, sizeof(output_path));
     FILE *outfile = boinc_fopen(output_path, "w");
     if (!outfile)
@@ -65,26 +43,50 @@ int generate_candidates(char *in, char *out, char *k)
         fclose(infile);
         return -1;
     }
-    else
+
+    char line[256];
+    // Add each line to items
+    while (fgets(line, sizeof(line), infile))
     {
-        bool first_candidate = true;
-        for (auto &candidate : candidates)
-        {
-            if (!first_candidate)
-                fprintf(outfile, "\n");
-            first_candidate = false;
-            bool first_item = true;
-            for (auto &item : candidate)
-            {
-                if (!first_item)
-                    fprintf(outfile, ",");
-                first_item = false;
-                fprintf(outfile, "%s", item.c_str());
-            }
-        }
-        fclose(outfile);
+        line[strcspn(line, "\n")] = 0;
+        items.push_back(line);
     }
 
+    // Sort items (required for next_permutation)
+    std::sort(items.begin(), items.end());
+
+    // Use std::next_permutation to generate all combinations (n choose k)
+    Candidates candidates;
+    do
+    {
+        std::set<std::string> candidate;
+        for (int i = 0; i < k; i++)
+        {
+            candidate.insert(items[i]);
+        }
+        candidates.insert(candidate);
+    } while (std::next_permutation(items.begin(), items.end()));
+
+    // Save candidates to output file
+    bool first_candidate = true;
+    for (auto &candidate : candidates)
+    {
+        if (!first_candidate)
+            fprintf(outfile, "\n");
+        first_candidate = false;
+        bool first_item = true;
+        for (auto &item : candidate)
+        {
+            if (!first_item)
+                fprintf(outfile, ",");
+            first_item = false;
+            fprintf(outfile, "%s", item.c_str());
+        }
+    }
+
+    // Close input and output files
+    fclose(infile);
+    fclose(outfile);
     return 0;
 }
 
@@ -102,19 +104,20 @@ int main(int argc, char **argv)
         exit(retval);
     }
 
-    // Check if there is exactly 4 arguments
-    // argv = [program_name, in, out, n]
-    if (argc == 4)
+    for (int i = 1; i < argc; i++)
     {
-        retval = generate_candidates(argv[1], argv[2], argv[3]);
-        if (retval)
-            exit(-1);
+        if (!strcmp(argv[i], "-k"))
+        {
+            k = atoi(argv[++i]);
+        }
+        else
+        {
+            retval = generate_candidates(argv[i], argv[i + 1]);
+            if (retval)
+                exit(-1);
+            i++;
+        }
     }
-    else
-    {
-        exit(-1);
-    }
-
     // Call BOINC finish
     boinc_finish(0);
 }
