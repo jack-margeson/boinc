@@ -1,3 +1,4 @@
 /example_app
 /.vscode
 /.venv
+src/libstdc++.a
