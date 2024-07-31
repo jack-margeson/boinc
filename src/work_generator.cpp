@@ -163,6 +163,12 @@ int main(int argc, char **argv)
                         // Erase item from line
                         line.erase(0, delimiterPos + 1);
                     }
+                    // If there are no more commas, and the length of the line isn't zero,
+                    // add the final entry (which should just be the rest of the line).
+                    if ((line.find(',') == std::string::npos) && line.length() != 0)
+                    {
+                        transactions[transactionID].push_back(line);
+                    }
                 }
 
                 // printTransactions(transactions);
