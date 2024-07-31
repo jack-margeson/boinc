@@ -11,10 +11,16 @@
 #include <chrono>
 #include <filesystem>
 #include <argparse/argparse.hpp>
+#include <sys/wait.h>
 
 #include "boinc_api.h"
 #include "filesys.h"
 #include "util.h"
+
+#define APRIORI_PROJECT_DIR "/home/boincadm/projects/apriori/"
+#define APRIORI_WORK_GENERATION_DIR "/home/boincadm/projects/apriori/work_generation/"
+#define STAGE_FILE "bin/stage_file"
+#define CREATE_WORK "bin/create_work"
 
 // Type definitions
 typedef std::set<std::string> Items;
@@ -122,7 +128,7 @@ int main(int argc, char **argv)
     }
 
     // Get command line inputs for program.
-    // bool dryRun = program.get<bool>("dry-run");
+    bool dryRun = program.get<bool>("dry-run");
     bool verbose = program.get<bool>("verbose");
     int chunkSize = program.get<int>("chunk-size");
     // int transactionsThreshold = program.get<int>("threshold");
@@ -249,17 +255,101 @@ int main(int argc, char **argv)
         fileIndex++;
     }
 
-    // 4. Use the BOINC API to schedule tasks.
-    // 5. Wait for the tasks to finish.
-    // 6. Consolitate answers from tasks, combine same sets.
-    // 7. Filter sets that do not meet threshold from the list of transactions.
-    // 8. Repeat steps 1-6 until we've run out of sets that are above the relevancy threshold or we've hit the number of max sets.
-    // 9. Algorithm is finished. Create file reporting findings.
-
     // Save item list for testing
     if (verbose)
         std::cout << "work_generator.cpp | Saving full item list as items_" << secSinceEpoch << ".apr..." << std::endl;
     saveItemList(items, "items_" + std::to_string(secSinceEpoch) + ".apr");
+
+    // 4. Use the BOINC API to schedule tasks.
+    // TODO: figure out why the BOINC_db.h file breaks the linker.
+    if (!dryRun)
+    {
+        if (verbose)
+            std::cout << "work_generator.cpp | Staging item chunk files for client download..." << std::endl;
+        // Create an iterator for the directory we just created.
+        std::string dirName = "item_chunks_" + std::to_string(secSinceEpoch);
+        auto itemDirectory = std::filesystem::directory_iterator("./" + dirName);
+        for (auto &itemFile : itemDirectory)
+        {
+            if (itemFile.is_regular_file())
+            {
+                // Fork the process
+                pid_t pid = fork();
+                std::string inputFile = APRIORI_WORK_GENERATION_DIR + dirName + "/" + itemFile.path().filename().c_str();
+
+                if (pid == 0) // Child process
+                {
+                    // Change the current working directory to the project location.
+                    std::filesystem::current_path(APRIORI_PROJECT_DIR);
+                    execl(STAGE_FILE, STAGE_FILE, "--copy", inputFile.c_str(), nullptr);
+                    // Following code is only reached if the execl fails for whatever reason.
+                    std::cerr << "Failed to execute script for file: " << inputFile.c_str() << std::endl;
+                    exit(1);
+                }
+                else if (pid < 0) // Fork failure
+                {
+                    std::cerr << "Failed to fork process for file: " << inputFile.c_str() << std::endl;
+                    exit(1);
+                }
+            }
+        }
+
+        // Wait for item chunk download staging to be complete.
+        int status = 0;
+        while (wait(&status) > 0)
+            ;
+        if (verbose)
+            std::cout << "work_generator.cpp | Item chunk file staging complete." << std::endl;
+
+        if (verbose)
+            std::cout << "work_generator.cpp | Generating work units..." << std::endl;
+        itemDirectory = std::filesystem::directory_iterator("./" + dirName);
+        for (auto &itemFile : itemDirectory)
+        {
+            if (itemFile.is_regular_file())
+            {
+                // Fork the process
+                pid_t pid = fork();
+                std::string inputFile = itemFile.path().filename().c_str();
+
+                if (pid == 0) // Child process
+                {
+                    // Change the current working directory to the project location.
+                    std::filesystem::current_path(APRIORI_PROJECT_DIR);
+                    // Exec create_work script
+                    execl(CREATE_WORK, CREATE_WORK, "--appname", "generate_candidates", "--command_line", "-k 1 in out", inputFile.c_str(), nullptr);
+                    // Following code is only reached if the execl fails for whatever reason.
+                    std::cerr << "Failed to execute script for file: " << inputFile.c_str() << std::endl;
+                    exit(1);
+                }
+                else if (pid > 0) // Parent process
+                {
+                    // Wait for the child to finish executing--this is to prevent SQL db flooding
+                    waitpid(pid, &status, 0);
+                }
+                else if (pid < 0) // Fork failure
+                {
+                    std::cerr << "Failed to fork process for file: " << inputFile.c_str() << std::endl;
+                    exit(1);
+                }
+            }
+        }
+
+        while (wait(&status) > 0)
+            ;
+        if (verbose)
+            std::cout << "work_generator.cpp | Work unit generation complete." << std::endl;
+    }
+    else
+    {
+        if (verbose)
+            std::cout << "work_generator.cpp | Dry run enabled--no files staged/work units created." << std::endl;
+    }
+
+    // 5. Consolitate answers from tasks, combine same sets.
+    // 6. Filter sets that do not meet threshold from the list of transactions.
+    // 7. Repeat steps 1-6 until we've run out of sets that are above the relevancy threshold or we've hit the number of max sets.
+    // 8. Algorithm is finished. Create file reporting findings.
 
     return 0;
 }
