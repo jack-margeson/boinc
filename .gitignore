@@ -2,3 +2,8 @@
 /.vscode
 /.venv
 src/libstdc++.a
+
+/out/item_chunks_test
+/out/boinc_finish_called
+/out/output
+/out/stderr.txt
